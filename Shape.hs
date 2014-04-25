@@ -15,40 +15,74 @@
 -- | Shapes' positioned by bottom-left corner--
 --------------------------------------------------------------------------------
 
-
 module NGL.Shape where
 
-import Graphics.Rendering.OpenGL (Vertex2(..))
+import Graphics.Rendering.OpenGL (Vertex4(..),
+                                  Color4(..),
+                                  GLclampf(..))
 import NGL.Utils
+
 
 data Shape = Circle    Point   Radius Divisions
            | Square    Point   Side
            | Rect      Point   Point
            | Line      Point   Point  Float  -- | Ordered pair to store directionality
-           | Triangle [Point]
+           | Triangle  Point   Point  Point
            | Quad     [Point]    -- | BL vertex TR vertex
            | Polygon  [Point]    -- | [Triangle] ? 
            | Polyline [Point]  Float
            | Curve    [Point]
            deriving Show
-           
+
+
+data Color = Red
+            | Green
+            | Blue
+            | White
+            | Black
+            | RGB    GLclampf GLclampf GLclampf 
+            | RGBA   GLclampf GLclampf GLclampf GLclampf
+            | Default
+            deriving Show
+
+instance Eq Color where
+    Red          == Red   = True
+    Green        == Green = True
+    Blue         == Blue  = True
+    White        == White = True
+    Black        == Black = True
+    RGB _ _ _    == RGB _ _ _    = True
+    RGBA _ _ _ _ == RGBA _ _ _ _ = True
+    Default      == Default      = True
+    _ == _ = False
+
 
 data Transform = Rotate2D Float Point 
                | Translate2D Point Point
                deriving Show
 
 
-type Picture   =[Vertex2 Float]
+type Picture   =[Vertex4 Float]
+type Points    =[Point]
 type Point     =(Float, Float)
 type Radius    = Float
 type Side      = Float
 type Divisions = Int
+type Drawable  = ([Color4 Float],[Vertex4 Float])
 
-toVertex2 :: [[Point]] -> Picture
-toVertex2 xs = map vertex $ concat xs
 
-vertex :: Point -> Vertex2 Float
-vertex p = (\(k,l) -> Vertex2 k l) p
+toDrawable :: Color -> Shape -> Drawable
+toDrawable clr x = (cs,vs)
+    where
+           vs    = map vertex $ shape x
+           color = getColor clr
+           cs    = map (\x -> color) $ vs
+
+toVertex :: [Point] -> Picture
+toVertex xs = map vertex xs
+
+vertex :: Point -> Vertex4 Float
+vertex p = (\(k,l) -> Vertex4 k l 0 1) p
 
 rotate :: Float -> [(Float, Float)] -> [(Float, Float)]
 rotate theta = rotate2D' (toRadians theta)
@@ -59,16 +93,15 @@ shape (Circle   pos rad divs) =  circle pos rad divs
 shape (Rect     bl  tr)       =  rect   bl  tr        -- | bl := bottom left, tr := top right
 shape (Line     p1  p2  w)    =  line   p1  p2  w
 shape (Polyline ps  w)        =  polyline ps w
+shape (Triangle p1  p2 p3)    =  triangle p1 p2 p3
 
 
 polyline :: [Point] -> Float -> [Point]
 polyline ps w = concatMap (\(x,y) -> line x y w) $ pairs $ abbcca ps
 
 
-
-
-triangle ::  [Point] -> Shape
-triangle = Triangle
+triangle :: Point -> Point -> Point -> [Point]
+triangle p1 p2 p3 = [p1, p2, p3]
 
 
 square :: Point -> Float -> [Point]
@@ -82,7 +115,7 @@ square pos side = [p1, p2, p3,
         p2 = (x - r, y + r)
         p3 = (x - r, y - r)
         p4 = (x + r, y - r)
-
+        
 
 abbcca :: [a] -> [a]
 abbcca (x:xs) = [x] ++ (concat $ map (\(x,y) -> [x,y]) $ map (\x -> (x, x)) (init xs)) ++ [last xs]
@@ -115,3 +148,12 @@ line (x1,y1) (x2,y2) w = map (addVectors (x1,y1)) $ rotate2D' theta $ rect (0.0,
            theta = signum y * acos x                               -- | angle in radians
            len   = sqrt((x2-x1)^2+ (y2-y1)^2)
 
+getColor :: (Real a) => Color -> Color4 a
+--getColor (RGB r g b)    = Color4 r g b 1
+--getColor (RGBA r g b a) = Color4 r g b a
+getColor x 
+    | x == Red   = Color4 1 0 0 1 
+    | x == Green = Color4 0 1 0 1
+    | x == Blue  = Color4 0 0 1 1
+    | x == White = Color4 1 1 1 1
+    | otherwise  = Color4 0 0 0 1

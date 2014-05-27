@@ -23,15 +23,25 @@ instance DrawIn Drawable where
     drawIn = draw
 instance DrawIn [Drawable] where
     drawIn :: N.Color -> Window -> [Drawable] -> IO ()
-    drawIn wc win ds = draw wc win (fromDrawables ds)
-            where
-               fromDrawables ds = (concat $ map fst ds, concat $ map snd ds)
+    drawIn windowColor window ds = draw windowColor window (fromDrawables ds)
+                       where
+                          fromDrawables ds = (concat $ map fst ds, concat $ map snd ds)
+
+
+shutdown :: GLFW.WindowCloseCallback
+shutdown win = do
+  GLFW.destroyWindow win
+  GLFW.terminate
+  _ <- exitWith ExitSuccess
+  return ()
 
 
 draw :: N.Color -> Window -> Drawable -> IO ()
-draw clr win xs = do
+draw clr window xs = do
     descriptor <- initResources xs
-    onDisplay clr win descriptor
+    onDisplay clr window descriptor
+
+-- | Descriptor would have to be updated in responce to some events
 
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
@@ -79,21 +89,8 @@ initResources (cs, vs) = do
     return $ Descriptor triangles firstIndex (fromIntegral numVertices)
 
 
-keyPressed :: GLFW.KeyCallback 
-keyPressed win GLFW.Key'Escape _ GLFW.KeyState'Pressed _ = shutdown win
-keyPressed _   _               _ _                     _ = return ()
-
-
-shutdown :: GLFW.WindowCloseCallback
-shutdown win = do
-  GLFW.destroyWindow win
-  GLFW.terminate
-  _ <- exitWith ExitSuccess
-  return ()
-
-
 resizeWindow :: GLFW.WindowSizeCallback
-resizeWindow win w h =
+resizeWindow window w h =
     do
       GL.viewport   $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
       GL.matrixMode $= GL.Projection
@@ -105,28 +102,28 @@ createWindow :: String -> (Int, Int) -> IO GLFW.Window
 createWindow title (sizex,sizey) = do
     GLFW.init
     GLFW.defaultWindowHints
-    Just win <- GLFW.createWindow sizex sizey title Nothing Nothing
-    GLFW.makeContextCurrent (Just win)
-    GLFW.setWindowSizeCallback win (Just resizeWindow)
-    GLFW.setKeyCallback win (Just keyPressed)
-    GLFW.setWindowCloseCallback win (Just shutdown)
-    return win
+    Just window <- GLFW.createWindow sizex sizey title Nothing Nothing
+    GLFW.makeContextCurrent (Just window)
+    GLFW.setWindowSizeCallback window (Just resizeWindow)
+    return window
 
 
 closeWindow :: GLFW.Window -> IO ()
-closeWindow win = do
-    GLFW.destroyWindow win
+closeWindow window = do
+    GLFW.destroyWindow window
     GLFW.terminate
 
 
 onDisplay :: N.Color -> GLFW.Window -> Descriptor -> IO ()
-onDisplay clr win descriptor@(Descriptor triangles firstIndex numVertices) = do
+onDisplay clr window descriptor@(Descriptor triangles firstIndex numVertices) = do
   GL.clearColor $= getColor clr
   GL.clear [ColorBuffer]
   bindVertexArrayObject $= Just triangles
   drawArrays Triangles firstIndex numVertices
-  GLFW.swapBuffers win
+  GLFW.swapBuffers window
 
   forever $ do
      GLFW.pollEvents
-     onDisplay clr win descriptor
+     onDisplay clr window descriptor
+
+-- | Descriptor seems like a good candidate to pass the change to

@@ -3,63 +3,43 @@
 
 module NGL.Rendering where
 
-import Graphics.Rendering.OpenGL as GL
+import Graphics.Rendering.OpenGL as GL hiding (Color, Constant)
 import Graphics.UI.GLFW as GLFW
 import Control.Monad
-import System.Exit ( exitWith, exitSuccess, ExitCode(..) )
+import Control.Applicative
+import System.Exit ( exitWith, ExitCode(..) )
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable
 import NGL.LoadShaders
 import NGL.Shape
-
+import Graphics.GLUtil
 
 
 data Descriptor = Descriptor VertexArrayObject ArrayIndex NumArrayIndices
 
-class DrawIn a where
-    drawIn :: NGL.Shape.Color -> Window -> a -> IO ()
-instance DrawIn Drawable where
-    drawIn = draw
-instance DrawIn [Drawable] where
-    drawIn :: NGL.Shape.Color -> Window -> [Drawable] -> IO ()
-    drawIn windowColor window ds = draw windowColor window (fromDrawables ds)
-
-
-fromDrawables ds = (concat $ map fst ds, concat $ map snd ds)
-
-drawParm :: Window -> [Drawable] -> Int -> IO ()
-drawParm window ds iter = undefined
-
-shutdown :: GLFW.WindowCloseCallback
-shutdown win = do
-  GLFW.destroyWindow win
-  GLFW.terminate
-  _ <- exitWith ExitSuccess
-  return ()
-
-
-draw :: NGL.Shape.Color -> Window -> Drawable -> IO ()
-draw clr window xs = do
+draw :: Window -> Drawable -> IO ()
+draw win xs = do
     descriptor <- initResources xs
-    onDisplayLoop clr window descriptor
-
-draw' :: NGL.Shape.Color -> Window -> Drawable -> Int -> IO ()
-draw' clr window xs iter = do
-    descriptor <- initResources' xs iter
-    onDisplayLoop clr window descriptor
-
--- | Descriptor would have to be updated in responce to some events
-
+    onDisplay win descriptor
+    
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
 
+loadTex :: FilePath -> IO TextureObject
+loadTex f = do t <- either error id <$> readTexture f
+               textureFilter Texture2D $= ((Linear', Nothing), Linear')
+               texture2DWrap $= (Repeated, ClampToEdge)
+               return t
 
-initResources :: ([Color4 Float],[Vertex4 Float]) -> IO Descriptor
-initResources (cs, vs) = do
+initResources :: ([Vertex4 Float],[TexCoord2 Float],String) -> IO Descriptor
+initResources (vs, uvs, tex) = do
     triangles <- genObjectName
     bindVertexArrayObject $= Just triangles
-
+    
+    --
+    -- Declaring VBO: vertices
+    --
     let vertices = vs
         numVertices = length vertices
    
@@ -74,73 +54,52 @@ initResources (cs, vs) = do
     vertexAttribPointer vPosition $=
         (ToFloat, VertexArrayDescriptor 4 Float 0 (bufferOffset firstIndex))
     vertexAttribArray vPosition $= Enabled
-    
-    let rgba = cs
-    
-    colorBuffer <- genObjectName
-    bindBuffer ArrayBuffer $= Just colorBuffer
-    withArray rgba $ \ptr -> do
-        let size = fromIntegral (numVertices * sizeOf (head rgba))
-        bufferData ArrayBuffer $= (size, ptr, StaticDraw)    
-    
-    let firstIndex = 0
-        vertexColor = AttribLocation 1
-    vertexAttribPointer vertexColor $=
-        (ToFloat, VertexArrayDescriptor 4 Float 0 (bufferOffset firstIndex))
-    vertexAttribArray vertexColor $= Enabled
 
-    program <- loadShaders [
-        ShaderInfo VertexShader (FileSource "NGL/Shaders/triangles.vert"),
-        ShaderInfo FragmentShader (FileSource "NGL/Shaders/triangles.frac")]
-    currentProgram $= Just program
-    
-    return $ Descriptor triangles firstIndex (fromIntegral numVertices)
+    --
+    -- Declaring VBO: UVs
+    --
+    let uvs = toUV Planar
 
-
-initResources' :: ([Color4 Float],[Vertex4 Float]) -> Int -> IO Descriptor
-initResources' (cs, vs) iter = do
-    triangles <- genObjectName
-    bindVertexArrayObject $= Just triangles
-
-    let vertices = vs
-        numVertices = length vertices
-
-    vertexBuffer <- genObjectName
-    bindBuffer ArrayBuffer $= Just vertexBuffer
-    withArray vs $ \ptr -> do
-        let size = fromIntegral (numVertices * sizeOf (head vs))
+    textureBuffer <- genObjectName
+    bindBuffer ArrayBuffer $= Just textureBuffer
+    withArray uvs $ \ptr -> do
+        let size = fromIntegral (numVertices * sizeOf (head uvs))
         bufferData ArrayBuffer $= (size, ptr, StaticDraw)
-
     let firstIndex = 0
-        vPosition = AttribLocation 0
-    vertexAttribPointer vPosition $=
-        (ToFloat, VertexArrayDescriptor 4 Float 0 (bufferOffset firstIndex))
-    vertexAttribArray vPosition $= Enabled
-
-    let rgba = cs
-
-    colorBuffer <- genObjectName
-    bindBuffer ArrayBuffer $= Just colorBuffer
-    withArray rgba $ \ptr -> do
-        let size = fromIntegral (numVertices * sizeOf (head rgba))
-        bufferData ArrayBuffer $= (size, ptr, StaticDraw)    
-
-    let firstIndex = 0
-        vertexColor = AttribLocation 1
-    vertexAttribPointer vertexColor $=
-        (ToFloat, VertexArrayDescriptor 4 Float 0 (bufferOffset firstIndex))
-    vertexAttribArray vertexColor $= Enabled
+        uvCoords = AttribLocation 2
+    vertexAttribPointer uvCoords $=
+        (ToFloat, VertexArrayDescriptor 2 Float 0 (bufferOffset firstIndex))
+    vertexAttribArray uvCoords $= Enabled 
+    
+    
+    tx <- loadTex tex
+    texture Texture2D $= Enabled
+    activeTexture $= TextureUnit 0
+    textureBinding Texture2D $= Just tx    
 
     program <- loadShaders [
-        ShaderInfo VertexShader (FileSource "NGL/Shaders/triangles.vert"),
-        ShaderInfo FragmentShader (FileSource "NGL/Shaders/triangles.frac")]
+        ShaderInfo VertexShader (FileSource "Shaders/shader.vert"),
+        ShaderInfo FragmentShader (FileSource "Shaders/shader.frag")]
     currentProgram $= Just program
-
+    
     return $ Descriptor triangles firstIndex (fromIntegral numVertices)
+
+
+keyPressed :: GLFW.KeyCallback 
+keyPressed win GLFW.Key'Escape _ GLFW.KeyState'Pressed _ = shutdown win
+keyPressed _   _               _ _                     _ = return ()
+
+
+shutdown :: GLFW.WindowCloseCallback
+shutdown win = do
+  GLFW.destroyWindow win
+  GLFW.terminate
+  _ <- exitWith ExitSuccess
+  return ()
 
 
 resizeWindow :: GLFW.WindowSizeCallback
-resizeWindow window w h =
+resizeWindow win w h =
     do
       GL.viewport   $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
       GL.matrixMode $= GL.Projection
@@ -148,38 +107,32 @@ resizeWindow window w h =
       GL.ortho2D 0 (realToFrac w) (realToFrac h) 0
 
 
-exit :: Window -> IO ()
-exit win = 
-     do
-      shutdown win
-      exitSuccess
-
-
 createWindow :: String -> (Int, Int) -> IO GLFW.Window
 createWindow title (sizex,sizey) = do
     GLFW.init
     GLFW.defaultWindowHints
-    Just window <- GLFW.createWindow sizex sizey title Nothing Nothing
-    GLFW.makeContextCurrent $ Just window
-    GLFW.setWindowSizeCallback window (Just resizeWindow)
-    return window
+    Just win <- GLFW.createWindow sizex sizey title Nothing Nothing
+    GLFW.makeContextCurrent (Just win)
+    GLFW.setWindowSizeCallback win (Just resizeWindow)
+    GLFW.setKeyCallback win (Just keyPressed)
+    GLFW.setWindowCloseCallback win (Just shutdown)
+    return win
 
 
 closeWindow :: GLFW.Window -> IO ()
-closeWindow window = do
-    GLFW.destroyWindow window
+closeWindow win = do
+    GLFW.destroyWindow win
     GLFW.terminate
 
 
-onDisplayLoop :: NGL.Shape.Color -> GLFW.Window -> Descriptor -> IO ()
-onDisplayLoop clr window descriptor@(Descriptor triangles firstIndex numVertices) = do
-  GL.clearColor $= getColor clr
+onDisplay :: GLFW.Window -> Descriptor -> IO ()
+onDisplay win descriptor@(Descriptor triangles firstIndex numVertices) = do
+  GL.clearColor $= Color4 0 0 0 1
   GL.clear [ColorBuffer]
   bindVertexArrayObject $= Just triangles
   drawArrays Triangles firstIndex numVertices
-  GLFW.swapBuffers window
+  GLFW.swapBuffers win
 
---  forever $ do
---     GLFW.pollEvents
---     onDisplayLoop clr window descriptor
--- | Descriptor seems like a good candidate to pass the change to
+  forever $ do
+     GLFW.pollEvents
+     onDisplay win descriptor
